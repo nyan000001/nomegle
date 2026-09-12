@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nomegle</title>
+<style>
+body { padding:0.5ch; margin:0; height:100dvh; display:flex; flex-direction:column; box-sizing:border-box; }
+* { font-size:1rem; font-family:monospace; }
+[disabled] { opacity:.7; border-color:#ccc !important; pointer-events:none; }
+[disabled]::placeholder { color:#fff; }
+form { display:flex; gap:0.5ch; justify-content:center; }
+textarea, button { border:2px solid #000; padding:0.5ch; }
+textarea:hover, button:hover, summary:hover { border-color:#f39; color:#f39; }
+textarea:focus, button:focus { border-color:#09f; color:#09f; outline:none; }
+#skip { position:fixed; right:0.5ch; }
+textarea { field-sizing:content; resize:none; max-height:50dvh; flex:1; }
+#main { flex:1; overflow:auto; }
+#messages > div { white-space:pre-wrap; }
+summary { cursor:default; text-align:center; }
+.hidden { display:none; }
+#rooms > a { display:block; }
+.stranger1 > span { color:#f00; font-weight:bold; }
+.stranger2 > span { color:#00f; font-weight:bold; }
+.system { font-weight:bold; }
+</style>
+</head>
+<body>
+
+<button id="skip" type="button" class="hidden">Skip</button>
+
+<div id="status"></div>
+
+<div id="rooms">
+	<form id="questionform">
+		<textarea id="question" placeholder="Ask a question"></textarea>
+		<button type="submit">Send</button>
+	</form>
+</div>
+
+<div id="main">
+	<div id="messages"></div>
+	<form id="rejoinform" class="hidden">
+		<textarea id="userid" placeholder="password"></textarea>
+		<button type="submit">Join</button>
+	</form>
+</div>
+
+<button id="next" type="button">Start</button>
+
+<form id="messageform" class="hidden">
+	<textarea id="message"></textarea>
+	<button type="submit">Send</button>
+</form>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+const get = id => document.getElementById(id);
+const clear = () => get('messages').textContent = '';
+const say = (text, side) => {
+	const div = document.createElement('div');
+	div.setHTML(text, { elements: ['b', 'i'] });
+	if(side) {
+		const span = document.createElement('span');
+		span.textContent = 'Stranger '+side+': ';
+		div.prepend(span);
+		div.classList.add('stranger'+side);
+	} else if(side == 0) {
+		div.classList.add('topic');
+	} else {
+		div.classList.add('system');
+	}
+	get('messages').append(div);
+	return div;
+};
+const show = elems => {
+	for(const elem of ['rooms', 'skip', 'rejoinform', 'messageform', 'next']) {
+		get(elem).classList[elems.includes(elem)? 'remove': 'add']('hidden');
+	}
+};
+const wait = text => {
+	clear();
+	say('Waiting...');
+	show(['skip']);
+	document.title = 'Nomegle';
+};
+for(const form of document.getElementsByTagName('form')) {
+	const textarea = form.querySelector('textarea');
+	form.onsubmit = e => {
+		e.preventDefault();
+		const value = textarea.value.trim();
+		if(!value) return;
+		({
+			'messageform':() => socket.emit('message', value),
+			'rejoinform':() => {
+				socket.emit('join', location.pathname.slice(1), value),
+				wait();
+			},
+			'questionform':() => {
+				socket.emit('ask', value);
+				wait();
+			}
+		})[form.id]();
+		textarea.value = '';
+	};
+	const button = form.querySelector('button');
+	button.onclick = () => textarea.focus();
+	textarea.onkeydown = e => {
+		if(e.key == 'Enter' && !e.shiftKey) {
+			e.preventDefault();
+			button.click();
+		}
+	};
+}
+let skipreally = false;
+get('skip').onclick = () => {
+	if(skipreally) {
+		socket.emit('skip');
+		if(onbeforeunload) {
+			onbeforeunload = null;
+		} else {
+			clear();
+		}
+		say('You have disconnected');
+		show(['rooms', 'next']);
+		get('skip').textContent = 'Skip';
+	} else {
+		get('skip').textContent = 'Really?';
+	}
+	skipreally = !skipreally;
+};
+const join = (roomid, userid) => {
+	socket.emit('join', roomid, userid);
+	history.pushState({}, "", '/'+roomid);
+	wait();
+};
+const roomid = location.pathname.slice(1);
+if(roomid) {
+	join(roomid, localStorage.getItem(roomid));
+}
+get('next').onclick = () => join('');
+const links = new Map();
+const add = (roomid, question) => {
+	const a = document.createElement('a');
+	a.setHTML(question, { elements: ['b', 'i'] });
+	a.href = '/'+roomid;
+	a.onclick = e => {
+		e.preventDefault();
+		join(roomid);
+	};
+	get('rooms').append(a);
+	links.set(roomid, a);
+}
+socket.once('rooms', rooms => rooms.forEach(room => add(...room)));
+socket.on('add', add);
+socket.on('remove', roomid => {
+	links.get(roomid).remove();
+	links.delete(roomid);
+});
+socket.on('join', (roomid, messages, userid, side) => {
+	clear();
+	messages.forEach(message => say(...message));
+	localStorage.setItem(roomid, userid);
+	if(localStorage.length > 100) {
+		localStorage.removeItem(localStorage.key(0));
+	}
+	history.replaceState({}, "", '/'+roomid);
+	document.title = messages[0][0];
+	if(side) {
+		show(['skip', 'messageform']);
+		get('message').focus();
+	} else {
+		show(['skip']);
+	}
+	get('next').textContent = 'Next';
+	onbeforeunload = () => true;
+});
+socket.on('notfound', () => {
+	clear();
+	say('Room not found');
+	show(['rooms', 'next']);
+});
+socket.on('full', () => {
+	clear();
+	say('(Conversation hidden)');
+	show(['rooms', 'rejoinform', 'next']);
+});
+socket.on('message', (text, side) => {
+	say(text, side).scrollIntoView();
+});
+socket.on('online', side => {
+	get('status').textContent = '';
+});
+socket.on('offline', side => {
+	get('status').textContent = 'Stranger '+side+' is reconnecting...';
+});
+onpagehide = () => socket.disconnect();
+let timeout;
+socket.on('connect', () => {
+	clearTimeout(timeout);
+	get('status').textContent = '';
+});
+socket.on('disconnect', () => {
+	get('status').textContent = 'Reconnecting...';
+	timeout = setTimeout(() => {
+		document.querySelectorAll('textarea, button').forEach(elem => elem.disabled = true);
+		socket.disconnect();
+		get('status').textContent = 'Disconnected';
+	}, 1800000);
+});
+</script>
+</body>
+</html>
