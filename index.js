@@ -10,7 +10,7 @@ io.on('connection', socket => {
 	if(socket.recovered) {
 		clearTimeout(socket.data.timeout);
 		const side = socket.data.side;
-		if(side && room.socketcounts[side] == 1) {
+		if(side && rooms.get(socket.data.roomid).socketcounts[side] == 1) {
 			io.to(socket.data.roomid).emit('online', side);
 		}
 	} else {
@@ -49,7 +49,7 @@ io.on('connection', socket => {
 			leave();
 		} else {
 			const side = socket.data.side;
-			if(side && room.socketcounts[side] == 1) {
+			if(side && rooms.get(socket.data.roomid).socketcounts[side] == 1) {
 				io.to(socket.data.roomid).emit('offline', side);
 			}
 			socket.data.timeout = setTimeout(() => {
@@ -68,7 +68,7 @@ io.on('connection', socket => {
 		}
 		room.socketcounts[socket.data.side]++;
 	};
-	const rand = arr => arr[Math.random*arr.length|0];
+	const rand = arr => arr[Math.random()*arr.length|0];
 	const createroom = question => {
 		question ??= rand([...rooms.values()])?.messages[0][0] ?? 'what brings you here?';
 		do var roomid = randomBytes(10).toString('hex');
@@ -114,7 +114,7 @@ io.on('connection', socket => {
 			};
 			join(roomid);
 			socket.emit('join', roomid, room.messages, userid, side);
-			if(side && rooms.get(roomid).socketcounts[side] == 1) {
+			if(side && room.socketcounts[side] == 1) {
 				const message = 'Stranger '+side+' has reconnected';
 				io.to(roomid).emit('message', message, null);
 				room.messages = room.messages.filter(message => message[0] != 'Stranger '+side+' has disconnected' && message[0] != 'Stranger '+side+' has reconnected');
